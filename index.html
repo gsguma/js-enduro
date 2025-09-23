@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enduro - Atari Game</title>
+    <style>
+        canvas {
+            border: 2px solid #333;
+            display: block;
+            margin: 20px auto;
+            background: #222;
+        }
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+        #instructions {
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="instructions">
+        Use ← → to move | Reach the checkpoint before time runs out!<br>
+        Press SPACE to start
+    </div>
+    <script>
+        // Game variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game states
+        const GAME_STATE = {
+            MENU: 0,
+            PLAYING: 1,
+            GAME_OVER: 2
+        };
+        
+        let gameState = GAME_STATE.MENU;
+        
+        // Time of day cycle
+        const TIME_STATES = {
+            DAWN: { sky: '#FF6B6B', ground: '#4A4A4A', fog: 'rgba(255, 107, 107, 0.3)' },
+            DAY: { sky: '#87CEEB', ground: '#8B4513', fog: 'rgba(255, 255, 255, 0)' },
+            DUSK: { sky: '#FF8C00', ground: '#4A4A4A', fog: 'rgba(255, 140, 0, 0.3)' },
+            NIGHT: { sky: '#191970', ground: '#2F4F4F', fog: 'rgba(25, 25, 112, 0.5)' }
+        };
+        let currentTime = 'DAWN';
+        let timeChangeCounter = 0;
+
+        // Sound effects
+        const SOUNDS = {
+            engine: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+            crash: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+            checkpoint: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+        };
+
+        // Player car
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height - 100,
+            width: 40,
+            height: 70,
+            speed: 5,
+            dx: 0,
+            sprite: createCarSprite('red')
+        };
+
+        // Road properties
+        const road = {
+            width: 600,
+            baseX: 100,
+            x: 100,
+            curve: 0,
+            banking: 0,
+            stripeWidth: 10,
+            stripeGap: 40,
+            stripes: [],
+            segments: []
+        };
+
+        // Game settings
+        const CHECKPOINT_TIME = 30; // seconds
+        let timeRemaining = CHECKPOINT_TIME;
+        let carsToPass = 30;
+        let carsPassed = 0;
+        let level = 1;
+
+        // Opponent cars
+        const opponents = [];
+        let score = 0;
+        let gameSpeed = 5;
+
+        // Create car sprite
+        function createCarSprite(color) {
+            const spriteCanvas = document.createElement('canvas');
+            spriteCanvas.width = 40;
+            spriteCanvas.height = 70;
+            const spriteCtx = spriteCanvas.getContext('2d');
+
+            // Car body
+            spriteCtx.fillStyle = color;
+            spriteCtx.beginPath();
+            spriteCtx.moveTo(20, 0);  // Ponta frontal
+            spriteCtx.lineTo(35, 20); // Lateral direita frontal
+            spriteCtx.lineTo(35, 60); // Lateral direita traseira
+            spriteCtx.lineTo(5, 60);  // Traseira
+            spriteCtx.lineTo(5, 20);  // Lateral esquerda
+            spriteCtx.closePath();
+            spriteCtx.fill();
+
+            // Windows
+            spriteCtx.fillStyle = '#333';
+            spriteCtx.beginPath();
+            spriteCtx.moveTo(20, 15);
+            spriteCtx.lineTo(30, 25);
+            spriteCtx.lineTo(30, 40);
+            spriteCtx.lineTo(10, 40);
+            spriteCtx.lineTo(10, 25);
+            spriteCtx.closePath();
+            spriteCtx.fill();
+            
+            // Wheels
+            spriteCtx.fillStyle = '#000';
+            spriteCtx.fillRect(2, 25, 6, 15);
+            spriteCtx.fillRect(32, 25, 6, 15);
+            spriteCtx.fillRect(2, 45, 6, 15);
+            spriteCtx.fillRect(32, 45, 6, 15);
+
+            // Details
+            spriteCtx.fillStyle = '#FFF';
+            spriteCtx.fillRect(33, 28, 2, 8); // Headlight
+            spriteCtx.fillRect(5, 52, 3, 5);  // Taillight
+
+            return spriteCanvas;
+        }
+
+        // Initialize road segments for perspective
+        function initRoad() {
+            road.segments = [];
+            for (let i = 0; i < 100; i++) {
+                road.segments.push({
+                    y: i * 10,
+                    width: road.width - (i * 4),
+                    x: road.baseX + (i * 2)
+                });
+            }
+        }
+
+        // Draw mountain background
+        function drawMountains() {
+            const timeState = TIME_STATES[currentTime];
+            
+            // Sky gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
+            gradient.addColorStop(0, timeState.sky);
+            gradient.addColorStop(1, '#FFF');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
+
+            // Mountains
+            ctx.fillStyle = timeState.ground;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2);
+            
+            // Create multiple mountain ranges
+            for (let i = 0; i < canvas.width; i += 50) {
+                // Back mountains (higher)
+                const backHeight = Math.sin(i * 0.02) * 80 + Math.random() * 20;
+                ctx.lineTo(i, canvas.height / 2 - backHeight);
+                
+                // Front mountains (lower)
+                if (i % 100 === 0) {
+                    const frontHeight = Math.sin(i * 0.01) * 40 + Math.random() * 10;
+                    ctx.lineTo(i + 25, canvas.height / 2 - frontHeight);
+                }
+            }
+            
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.fill();
+
+            // Add snow caps to mountains
+            ctx.fillStyle = '#FFF';
+            ctx.globalAlpha = 0.3;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2);
+            for (let i = 0; i < canvas.width; i += 50) {
+                const height = Math.sin(i * 0.02) * 80 + Math.random() * 20;
+                ctx.lineTo(i, canvas.height / 2 - height + 10);
+            }
+            ctx.lineTo(canvas.width, canvas.height / 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
+        // Draw road with perspective
+        function drawRoad() {
+            const timeState = TIME_STATES[currentTime];
+            
+            // Road segments with perspective
+            road.segments.forEach((segment, index) => {
+                const y = (segment.y + timeChangeCounter) % canvas.height;
+                const width = segment.width;
+                const x = segment.x + Math.sin(road.curve) * (index * 2);
+                
+                // Road
+                ctx.fillStyle = index % 2 === 0 ? '#444' : '#4A4A4A';
+                ctx.fillRect(x, y, width, 10);
+                
+                // Center line
+                if (index % 3 === 0) {
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(x + width/2 - 5, y, 10, 5);
+                }
+
+                // Side barriers
+                ctx.fillStyle = '#FF0000';
+                ctx.fillRect(x - 10, y, 5, 10);
+                ctx.fillRect(x + width + 5, y, 5, 10);
+            });
+
+            // Apply fog effect
+            ctx.fillStyle = timeState.fog;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawPlayer() {
+            ctx.save();
+            ctx.translate(player.x + player.width/2, player.y + player.height/2);
+            ctx.rotate(road.banking * Math.PI/180);
+            ctx.drawImage(player.sprite, -player.width/2, -player.height/2);
+            
+            // Add car shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.beginPath();
+            ctx.ellipse(-player.width/2, player.height/2, player.width/2, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        function drawOpponents() {
+            opponents.forEach(car => {
+                ctx.save();
+                ctx.translate(car.x + car.width/2, car.y + car.height/2);
+                ctx.drawImage(car.sprite, -car.width/2, -car.height/2);
+                
+                // Add car shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(-car.width/2, car.height/2, car.width/2, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            });
+        }
+
+        function drawHUD() {
+            // Background for HUD
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(10, 10, 200, 80);
+            ctx.fillRect(canvas.width - 210, 10, 200, 80);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 20px Arial';
+            
+            // Score and level
+            ctx.fillText(`Score: ${score}`, 20, 35);
+            ctx.fillText(`Level: ${level}`, 20, 65);
+            
+            // Cars to pass
+            ctx.textAlign = 'right';
+            ctx.fillText(`Cars to pass: ${carsToPass - carsPassed}`, canvas.width - 20, 35);
+            
+            // Time remaining with color warning
+            if (timeRemaining <= 10) {
+                ctx.fillStyle = timeRemaining <= 5 ? '#FF0000' : '#FFFF00';
+            }
+            ctx.fillText(`Time: ${Math.ceil(timeRemaining)}s`, canvas.width - 20, 65);
+            ctx.fillStyle = '#FFF';
+            ctx.textAlign = 'left';
+            
+            // Speed gauge
+            const speed = Math.floor(gameSpeed * 10);
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(20, canvas.height - 40, 150, 30);
+            ctx.fillStyle = `hsl(${120 - speed}deg, 100%, 50%)`;
+            ctx.fillRect(25, canvas.height - 35, speed, 20);
+            ctx.fillStyle = '#FFF';
+            ctx.fillText(`${speed} mph`, 30, canvas.height - 20);
+        }
+
+        function createOpponent() {
+            if (gameState !== GAME_STATE.PLAYING) return;
+            
+            if (Math.random() < 0.02 && opponents.length < 5) {
+                const colors = ['blue', 'green', 'yellow', 'purple', 'orange'];
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                
+                opponents.push({
+                    x: road.x + Math.random() * (road.width - 40),
+                    y: -70,
+                    width: 40,
+                    height: 70,
+                    speed: 2 + Math.random() * 2,
+                    sprite: createCarSprite(color)
+                });
+            }
+        }
+
+        function updateGameState() {
+            if (gameState !== GAME_STATE.PLAYING) return;
+
+            // Update time remaining
+            timeRemaining -= 1/60;
+            if (timeRemaining <= 0) {
+                gameOver('Time\'s up!');
+                return;
+            }
+
+            // Update time of day
+            timeChangeCounter += gameSpeed;
+            if (timeChangeCounter > 1000) {
+                timeChangeCounter = 0;
+                const times = Object.keys(TIME_STATES);
+                const currentIndex = times.indexOf(currentTime);
+                currentTime = times[(currentIndex + 1) % times.length];
+            }
+
+            // Update road curve
+            road.curve = Math.sin(timeChangeCounter * 0.001) * 0.5;
+            road.banking = road.curve * 10;
+
+            // Update player position with road curve effect
+            player.x += player.dx + (road.curve * gameSpeed);
+            player.x = Math.max(road.x, Math.min(road.x + road.width - player.width, player.x));
+
+            // Update opponents
+            updateOpponents();
+            
+            // Check for checkpoint
+            if (carsPassed >= carsToPass) {
+                levelComplete();
+            }
+        }
+
+        function updateOpponents() {
+            for (let i = opponents.length - 1; i >= 0; i--) {
+                const car = opponents[i];
+                car.y += car.speed * gameSpeed;
+                
+                // Add slight horizontal movement
+                car.x += Math.sin(car.y * 0.02) * 0.5;
+                
+                // Remove cars that are off screen
+                if (car.y > canvas.height) {
+                    opponents.splice(i, 1);
+                    carsPassed++;
+                    score += 10;
+                }
+                
+                // Check for collision
+                if (checkCollision(player, car)) {
+                    SOUNDS.crash.play();
+                    gameOver('Crashed!');
+                    return;
+                }
+            }
+        }
+
+        function checkCollision(a, b) {
+            // Use a slightly smaller hitbox for more forgiving gameplay
+            const margin = 5;
+            return (a.x + margin) < (b.x + b.width - margin) &&
+                   (a.x + a.width - margin) > (b.x + margin) &&
+                   (a.y + margin) < (b.y + b.height - margin) &&
+                   (a.y + a.height - margin) > (b.y + margin);
+        }
+
+        function levelComplete() {
+            SOUNDS.checkpoint.play();
+            level++;
+            timeRemaining = CHECKPOINT_TIME;
+            carsPassed = 0;
+            carsToPass += 5;
+            gameSpeed += 0.5;
+            
+            // Show level completion message
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = '48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Level ${level-1} Complete!`, canvas.width/2, canvas.height/2 - 50);
+            ctx.font = '24px Arial';
+            ctx.fillText(`Score: ${score}`, canvas.width/2, canvas.height/2);
+            
+            // Reset text alignment
+            ctx.textAlign = 'left';
+        }
+
+        function gameOver(reason) {
+            gameState = GAME_STATE.GAME_OVER;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#FFF';
+            ctx.font = '48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 50);
+            ctx.font = '24px Arial';
+            ctx.fillText(reason, canvas.width/2, canvas.height/2);
+            ctx.fillText(`Score: ${score}  Level: ${level}`, canvas.width/2, canvas.height/2 + 50);
+            ctx.fillText('Press SPACE to restart', canvas.width/2, canvas.height/2 + 100);
+            
+            ctx.textAlign = 'left';
+        }
+
+        function resetGame() {
+            score = 0;
+            level = 1;
+            gameSpeed = 5;
+            timeRemaining = CHECKPOINT_TIME;
+            carsPassed = 0;
+            carsToPass = 30;
+            opponents.length = 0;
+            currentTime = 'DAWN';
+            timeChangeCounter = 0;
+            player.x = canvas.width / 2;
+            gameState = GAME_STATE.PLAYING;
+            SOUNDS.engine.play();
+        }
+
+        function drawMenu() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Title with shadow
+            ctx.fillStyle = '#FF0000';
+            ctx.font = 'bold 72px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('ENDURO', canvas.width/2 + 4, canvas.height/2 - 46);
+            ctx.fillStyle = '#FFF';
+            ctx.fillText('ENDURO', canvas.width/2, canvas.height/2 - 50);
+            
+            // Animated "Press SPACE to start"
+            const pulse = Math.sin(Date.now() * 0.005) * 0.5 + 0.5;
+            ctx.font = '24px Arial';
+            ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
+            ctx.fillText('Press SPACE to start', canvas.width/2, canvas.height/2 + 50);
+            
+            // Controls
+            ctx.font = '18px Arial';
+            ctx.fillStyle = '#888';
+            ctx.fillText('Use ← → arrows to control your car', canvas.width/2, canvas.height/2 + 100);
+            ctx.fillText('Avoid other cars and reach the checkpoint before time runs out!', canvas.width/2, canvas.height/2 + 130);
+            
+            ctx.textAlign = 'left';
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            switch(gameState) {
+                case GAME_STATE.MENU:
+                    drawMenu();
+                    break;
+                    
+                case GAME_STATE.PLAYING:
+                    drawMountains();
+                    drawRoad();
+                    drawPlayer();
+                    drawOpponents();
+                    drawHUD();
+                    
+                    updateGameState();
+                    createOpponent();
+                    break;
+                    
+                case GAME_STATE.GAME_OVER:
+                    // Game over screen is drawn in gameOver function
+                    break;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Controls
+        document.addEventListener('keydown', e => {
+            switch(e.code) {
+                case 'ArrowLeft':
+                    player.dx = -player.speed;
+                    break;
+                case 'ArrowRight':
+                    player.dx = player.speed;
+                    break;
+                case 'Space':
+                    if (gameState === GAME_STATE.MENU || gameState === GAME_STATE.GAME_OVER) {
+                        resetGame();
+                    }
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', e => {
+            switch(e.code) {
+                case 'ArrowLeft':
+                    if (player.dx < 0) player.dx = 0;
+                    break;
+                case 'ArrowRight':
+                    if (player.dx > 0) player.dx = 0;
+                    break;
+            }
+        });
+
+        // Initialize and start game
+        initRoad();
+        gameLoop();
+
+        // Start engine sound on first interaction
+        document.addEventListener('click', () => {
+            if (gameState === GAME_STATE.MENU) {
+                SOUNDS.engine.loop = true;
+                SOUNDS.engine.play();
+            }
+        }, { once: true });
+    </script>
+</body>
+</html>
