@@ -1,540 +1,685 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enduro - Atari Game</title>
-    <style>
-        canvas {
-            border: 2px solid #333;
-            display: block;
-            margin: 20px auto;
-            background: #222;
-        }
-        body {
-            background: #000;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            font-family: Arial, sans-serif;
-            color: white;
-        }
-        #instructions {
-            margin-top: 20px;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
-    <div id="instructions">
-        Use ← → to move | Reach the checkpoint before time runs out!<br>
-        Press SPACE to start
-    </div>
-    <script>
-        // Game variables
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Game states
-        const GAME_STATE = {
-            MENU: 0,
-            PLAYING: 1,
-            GAME_OVER: 2
-        };
-        
-        let gameState = GAME_STATE.MENU;
-        
-        // Time of day cycle
-        const TIME_STATES = {
-            DAWN: { sky: '#FF6B6B', ground: '#4A4A4A', fog: 'rgba(255, 107, 107, 0.3)' },
-            DAY: { sky: '#87CEEB', ground: '#8B4513', fog: 'rgba(255, 255, 255, 0)' },
-            DUSK: { sky: '#FF8C00', ground: '#4A4A4A', fog: 'rgba(255, 140, 0, 0.3)' },
-            NIGHT: { sky: '#191970', ground: '#2F4F4F', fog: 'rgba(25, 25, 112, 0.5)' }
-        };
-        let currentTime = 'DAWN';
-        let timeChangeCounter = 0;
-
-        // Sound effects
-        const SOUNDS = {
-            engine: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
-            crash: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='),
-            checkpoint: new Audio('data:audio/wav;base64,UklGRl9vAAAvrXplcm8uAABzZXJvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
-        };
-
-        // Player car
-        const player = {
-            x: canvas.width / 2,
-            y: canvas.height - 100,
-            width: 40,
-            height: 70,
-            speed: 5,
-            dx: 0,
-            sprite: createCarSprite('red')
-        };
-
-        // Road properties
-        const road = {
-            width: 600,
-            baseX: 100,
-            x: 100,
-            curve: 0,
-            banking: 0,
-            stripeWidth: 10,
-            stripeGap: 40,
-            stripes: [],
-            segments: []
-        };
-
-        // Game settings
-        const CHECKPOINT_TIME = 30; // seconds
-        let timeRemaining = CHECKPOINT_TIME;
-        let carsToPass = 30;
-        let carsPassed = 0;
-        let level = 1;
-
-        // Opponent cars
-        const opponents = [];
-        let score = 0;
-        let gameSpeed = 5;
-
-        // Create car sprite
-        function createCarSprite(color) {
-            const spriteCanvas = document.createElement('canvas');
-            spriteCanvas.width = 40;
-            spriteCanvas.height = 70;
-            const spriteCtx = spriteCanvas.getContext('2d');
-
-            // Car body
-            spriteCtx.fillStyle = color;
-            spriteCtx.beginPath();
-            spriteCtx.moveTo(20, 0);  // Ponta frontal
-            spriteCtx.lineTo(35, 20); // Lateral direita frontal
-            spriteCtx.lineTo(35, 60); // Lateral direita traseira
-            spriteCtx.lineTo(5, 60);  // Traseira
-            spriteCtx.lineTo(5, 20);  // Lateral esquerda
-            spriteCtx.closePath();
-            spriteCtx.fill();
-
-            // Windows
-            spriteCtx.fillStyle = '#333';
-            spriteCtx.beginPath();
-            spriteCtx.moveTo(20, 15);
-            spriteCtx.lineTo(30, 25);
-            spriteCtx.lineTo(30, 40);
-            spriteCtx.lineTo(10, 40);
-            spriteCtx.lineTo(10, 25);
-            spriteCtx.closePath();
-            spriteCtx.fill();
-            
-            // Wheels
-            spriteCtx.fillStyle = '#000';
-            spriteCtx.fillRect(2, 25, 6, 15);
-            spriteCtx.fillRect(32, 25, 6, 15);
-            spriteCtx.fillRect(2, 45, 6, 15);
-            spriteCtx.fillRect(32, 45, 6, 15);
-
-            // Details
-            spriteCtx.fillStyle = '#FFF';
-            spriteCtx.fillRect(33, 28, 2, 8); // Headlight
-            spriteCtx.fillRect(5, 52, 3, 5);  // Taillight
-
-            return spriteCanvas;
-        }
-
-        // Initialize road segments for perspective
-        function initRoad() {
-            road.segments = [];
-            for (let i = 0; i < 100; i++) {
-                road.segments.push({
-                    y: i * 10,
-                    width: road.width - (i * 4),
-                    x: road.baseX + (i * 2)
-                });
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Enduro - Atari Game (JS)</title>
+        <style>
+            body {
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #000;
+                color: white;
+                font-family: monospace;
             }
-        }
-
-        // Draw mountain background
-        function drawMountains() {
-            const timeState = TIME_STATES[currentTime];
-            
-            // Sky gradient
-            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height / 2);
-            gradient.addColorStop(0, timeState.sky);
-            gradient.addColorStop(1, '#FFF');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height / 2);
-
-            // Mountains
-            ctx.fillStyle = timeState.ground;
-            ctx.beginPath();
-            ctx.moveTo(0, canvas.height / 2);
-            
-            // Create multiple mountain ranges
-            for (let i = 0; i < canvas.width; i += 50) {
-                // Back mountains (higher)
-                const backHeight = Math.sin(i * 0.02) * 80 + Math.random() * 20;
-                ctx.lineTo(i, canvas.height / 2 - backHeight);
-                
-                // Front mountains (lower)
-                if (i % 100 === 0) {
-                    const frontHeight = Math.sin(i * 0.01) * 40 + Math.random() * 10;
-                    ctx.lineTo(i + 25, canvas.height / 2 - frontHeight);
-                }
+            canvas {
+                border: 2px solid #333;
+                background: #222;
+                display: block;
             }
-            
-            ctx.lineTo(canvas.width, canvas.height / 2);
-            ctx.fill();
+        </style>
+    </head>
+    <body>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <script>
+            // Enduro-like JS game (2-space indentation)
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
 
-            // Add snow caps to mountains
-            ctx.fillStyle = '#FFF';
-            ctx.globalAlpha = 0.3;
-            ctx.beginPath();
-            ctx.moveTo(0, canvas.height / 2);
-            for (let i = 0; i < canvas.width; i += 50) {
-                const height = Math.sin(i * 0.02) * 80 + Math.random() * 20;
-                ctx.lineTo(i, canvas.height / 2 - height + 10);
+            const GAME = {
+                STATE: { MENU: 0, PLAYING: 1, GAME_OVER: 2 },
+                CHECKPOINT_TIME: 30,
+                INITIAL_SPEED: 2.2,
+                LANE_COUNT: 3
+            };
+
+            // Tunables
+            const BOTTOM_ZONE_HEIGHT = 180; // px from bottom where opponents count as 'blocking'
+            const ROAD_BAND_HEIGHT = 40; // height of alternating bands (increased for clearer motion)
+            // throttle & engine sound tuning (easy to tweak)
+            // THROTTLE_EFFECT is multiplicative: worldSpeed = baseSpeed * (1 + throttle * THROTTLE_EFFECT)
+            const THROTTLE_EFFECT = 0.9; // how much throttle changes speed (multiplicative)
+            const THROTTLE_RAMP = 5.0; // how quickly throttle value ramps toward input target (units/sec)
+            const ENGINE_BASE_RATE = 0.7; // base playbackRate for engine sound
+            const ENGINE_RATE_SCALE = 0.25; // how much speed affects playbackRate
+            const ENGINE_VOLUME_BASE = 0.18; // base engine volume
+            const BASE_KMH = 60; // display mapping: GAME.INITIAL_SPEED == BASE_KMH km/h
+            // braking limit factor: when braking, minimum world speed is baseSpeed * BRAKE_MIN_FACTOR
+            const BRAKE_MIN_FACTOR = 0.5; // brake can reduce speed at most to 50% of level base speed
+
+            const TIME_STATES = {
+                DAWN: { sky: '#FF6B6B', fog: 'rgba(255, 107, 107, 0.15)' },
+                DAY: { sky: '#87CEEB', fog: 'rgba(255,255,255,0)' },
+                DUSK: { sky: '#FF8C00', fog: 'rgba(255, 140, 0, 0.12)' },
+                NIGHT: { sky: '#191970', fog: 'rgba(0,0,0,0.25)' }
+            };
+
+            // Parallax mountain layers (color, speed multiplier, height)
+            const MOUNTAINS = [
+                // Atari-ish mountain palette and slightly tuned speeds
+                { color: '#1e2740', speed: 0.08, height: 0.35, offset: 0 },
+                { color: '#33406a', speed: 0.16, height: 0.5, offset: 0 },
+                { color: '#51618f', speed: 0.36, height: 0.7, offset: 0 }
+            ];
+
+            let state = {
+                mode: GAME.STATE.MENU,
+                level: 1,
+                score: 0,
+                carsToPass: 100, // cars required to reach next level
+                carsPassed: 0,
+                speed: GAME.INITIAL_SPEED,
+                speedTarget: GAME.INITIAL_SPEED,
+                // base speed for the current level (fixed per level, increments slowly)
+                baseSpeed: GAME.INITIAL_SPEED,
+                // player throttle: -1 (brake) .. 0 (neutral) .. 1 (accelerate)
+                throttle: 0,
+                timeOfDay: 'DAWN',
+                timeCounter: 0
+            };
+
+            const road = {
+                x: 80,
+                width: 640,
+                lanes: [],
+                curve: 0, // current curve offset (-1 .. 1)
+                targetCurve: 0, // desired curve to tween to
+                curveSpeed: 0.6, // how quickly curve changes
+                offset: 0, // visual offset for animated bands
+                bank: 0,
+                segmentTimer: 0,
+                segmentDuration: 3, // seconds per segment
+                segmentType: 'straight' // 'straight' or 'curve'
+            };
+
+            const player = {
+                lane: 1,
+                sprite: null,
+                width: 36,
+                height: 50,
+                posY: canvas.height - 120
+            };
+
+            const opponents = [];
+
+            const SOUNDS = {
+                engine: new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='),
+                crash: new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='),
+                checkpoint: new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=')
+            };
+
+            function createCarSprite(color) {
+                const c = document.createElement('canvas');
+                c.width = player.width;
+                c.height = player.height;
+                const g = c.getContext('2d');
+                // body
+                g.fillStyle = color;
+                g.fillRect(4, 6, player.width - 8, player.height - 12);
+                // roof/stripe
+                g.fillStyle = '#333';
+                g.fillRect(8, 10, player.width - 16, 12);
+                // wheels
+                g.fillStyle = '#000';
+                g.fillRect(2, 18, 6, 6);
+                g.fillRect(player.width - 8, 18, 6, 6);
+                // tail lights (rear): two small red squares at the bottom rear
+                g.fillStyle = '#b20000';
+                g.fillRect(4, player.height - 12, 6, 4);
+                g.fillRect(player.width - 10, player.height - 12, 6, 4);
+                return c;
             }
-            ctx.lineTo(canvas.width, canvas.height / 2);
-            ctx.fill();
-            ctx.globalAlpha = 1;
-        }
 
-        // Draw road with perspective
-        function drawRoad() {
-            const timeState = TIME_STATES[currentTime];
-            
-            // Road segments with perspective
-            road.segments.forEach((segment, index) => {
-                const y = (segment.y + timeChangeCounter) % canvas.height;
-                const width = segment.width;
-                const x = segment.x + Math.sin(road.curve) * (index * 2);
-                
-                // Road
-                ctx.fillStyle = index % 2 === 0 ? '#444' : '#4A4A4A';
-                ctx.fillRect(x, y, width, 10);
-                
-                // Center line
-                if (index % 3 === 0) {
-                    ctx.fillStyle = '#FFF';
-                    ctx.fillRect(x + width/2 - 5, y, 10, 5);
-                }
-
-                // Side barriers
-                ctx.fillStyle = '#FF0000';
-                ctx.fillRect(x - 10, y, 5, 10);
-                ctx.fillRect(x + width + 5, y, 5, 10);
-            });
-
-            // Apply fog effect
-            ctx.fillStyle = timeState.fog;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        function drawPlayer() {
-            ctx.save();
-            ctx.translate(player.x + player.width/2, player.y + player.height/2);
-            ctx.rotate(road.banking * Math.PI/180);
-            ctx.drawImage(player.sprite, -player.width/2, -player.height/2);
-            
-            // Add car shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.beginPath();
-            ctx.ellipse(-player.width/2, player.height/2, player.width/2, 10, 0, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.restore();
-        }
-
-        function drawOpponents() {
-            opponents.forEach(car => {
-                ctx.save();
-                ctx.translate(car.x + car.width/2, car.y + car.height/2);
-                ctx.drawImage(car.sprite, -car.width/2, -car.height/2);
-                
-                // Add car shadow
-                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            // small helper to draw rounded rectangles
+            function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+                if (r === undefined) r = 5;
                 ctx.beginPath();
-                ctx.ellipse(-car.width/2, car.height/2, car.width/2, 10, 0, 0, Math.PI * 2);
-                ctx.fill();
-                
-                ctx.restore();
-            });
-        }
-
-        function drawHUD() {
-            // Background for HUD
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(10, 10, 200, 80);
-            ctx.fillRect(canvas.width - 210, 10, 200, 80);
-            
-            ctx.fillStyle = '#FFF';
-            ctx.font = 'bold 20px Arial';
-            
-            // Score and level
-            ctx.fillText(`Score: ${score}`, 20, 35);
-            ctx.fillText(`Level: ${level}`, 20, 65);
-            
-            // Cars to pass
-            ctx.textAlign = 'right';
-            ctx.fillText(`Cars to pass: ${carsToPass - carsPassed}`, canvas.width - 20, 35);
-            
-            // Time remaining with color warning
-            if (timeRemaining <= 10) {
-                ctx.fillStyle = timeRemaining <= 5 ? '#FF0000' : '#FFFF00';
-            }
-            ctx.fillText(`Time: ${Math.ceil(timeRemaining)}s`, canvas.width - 20, 65);
-            ctx.fillStyle = '#FFF';
-            ctx.textAlign = 'left';
-            
-            // Speed gauge
-            const speed = Math.floor(gameSpeed * 10);
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(20, canvas.height - 40, 150, 30);
-            ctx.fillStyle = `hsl(${120 - speed}deg, 100%, 50%)`;
-            ctx.fillRect(25, canvas.height - 35, speed, 20);
-            ctx.fillStyle = '#FFF';
-            ctx.fillText(`${speed} mph`, 30, canvas.height - 20);
-        }
-
-        function createOpponent() {
-            if (gameState !== GAME_STATE.PLAYING) return;
-            
-            if (Math.random() < 0.02 && opponents.length < 5) {
-                const colors = ['blue', 'green', 'yellow', 'purple', 'orange'];
-                const color = colors[Math.floor(Math.random() * colors.length)];
-                
-                opponents.push({
-                    x: road.x + Math.random() * (road.width - 40),
-                    y: -70,
-                    width: 40,
-                    height: 70,
-                    speed: 2 + Math.random() * 2,
-                    sprite: createCarSprite(color)
-                });
-            }
-        }
-
-        function updateGameState() {
-            if (gameState !== GAME_STATE.PLAYING) return;
-
-            // Update time remaining
-            timeRemaining -= 1/60;
-            if (timeRemaining <= 0) {
-                gameOver('Time\'s up!');
-                return;
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+                if (fill) ctx.fill();
+                if (stroke) ctx.stroke();
             }
 
-            // Update time of day
-            timeChangeCounter += gameSpeed;
-            if (timeChangeCounter > 1000) {
-                timeChangeCounter = 0;
-                const times = Object.keys(TIME_STATES);
-                const currentIndex = times.indexOf(currentTime);
-                currentTime = times[(currentIndex + 1) % times.length];
+            // create a pre-rendered variant of player sprite with bright tail-lights
+            function createCarSpriteBright(color) {
+                const s = createCarSprite(color);
+                const g = s.getContext('2d');
+                // bright tail-lights overlay
+                g.fillStyle = 'rgba(255,70,70,0.9)';
+                g.fillRect(4, player.height - 12, 6, 4);
+                g.fillRect(player.width - 10, player.height - 12, 6, 4);
+                return s;
             }
 
-            // Update road curve
-            road.curve = Math.sin(timeChangeCounter * 0.001) * 0.5;
-            road.banking = road.curve * 10;
-
-            // Update player position with road curve effect
-            player.x += player.dx + (road.curve * gameSpeed);
-            player.x = Math.max(road.x, Math.min(road.x + road.width - player.width, player.x));
-
-            // Update opponents
-            updateOpponents();
-            
-            // Check for checkpoint
-            if (carsPassed >= carsToPass) {
-                levelComplete();
-            }
-        }
-
-        function updateOpponents() {
-            for (let i = opponents.length - 1; i >= 0; i--) {
-                const car = opponents[i];
-                car.y += car.speed * gameSpeed;
-                
-                // Add slight horizontal movement
-                car.x += Math.sin(car.y * 0.02) * 0.5;
-                
-                // Remove cars that are off screen
-                if (car.y > canvas.height) {
-                    opponents.splice(i, 1);
-                    carsPassed++;
-                    score += 10;
-                }
-                
-                // Check for collision
-                if (checkCollision(player, car)) {
-                    SOUNDS.crash.play();
-                    gameOver('Crashed!');
-                    return;
+            function initLanes() {
+                road.lanes = [];
+                for (let i = 0; i < GAME.LANE_COUNT; i++) {
+                    const base = road.x + (i + 0.5) * (road.width / GAME.LANE_COUNT) - player.width / 2;
+                    road.lanes.push(base);
                 }
             }
-        }
 
-        function checkCollision(a, b) {
-            // Use a slightly smaller hitbox for more forgiving gameplay
-            const margin = 5;
-            return (a.x + margin) < (b.x + b.width - margin) &&
-                   (a.x + a.width - margin) > (b.x + margin) &&
-                   (a.y + margin) < (b.y + b.height - margin) &&
-                   (a.y + a.height - margin) > (b.y + margin);
-        }
+            function spawnOpponent() {
+                // slightly higher spawn probability and more opponents at higher speed
+                    // compute a dynamic maximum opponents: start small and grow slowly by level
+                    const maxOpponents = 3 + Math.floor((state.level - 1) / 3); // +1 every 3 levels
+                    const baseChance = 0.03 + Math.min(0.05, state.level * 0.003);
+                    if (Math.random() < baseChance && opponents.length < Math.min(10, maxOpponents) && state.mode === GAME.STATE.PLAYING) {
+                        // prevent impossible situations: ensure no more than 2 opponents are in the bottom zone
+                        const bottomZoneY = canvas.height - BOTTOM_ZONE_HEIGHT;
+                        const bottomCount = opponents.reduce((c, o) => c + (o.y > bottomZoneY ? 1 : 0), 0);
+                        if (bottomCount >= 2) return;
 
-        function levelComplete() {
-            SOUNDS.checkpoint.play();
-            level++;
-            timeRemaining = CHECKPOINT_TIME;
-            carsPassed = 0;
-            carsToPass += 5;
-            gameSpeed += 0.5;
-            
-            // Show level completion message
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            ctx.fillStyle = '#FFF';
-            ctx.font = '48px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(`Level ${level-1} Complete!`, canvas.width/2, canvas.height/2 - 50);
-            ctx.font = '24px Arial';
-            ctx.fillText(`Score: ${score}`, canvas.width/2, canvas.height/2);
-            
-            // Reset text alignment
-            ctx.textAlign = 'left';
-        }
-
-        function gameOver(reason) {
-            gameState = GAME_STATE.GAME_OVER;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            ctx.fillStyle = '#FFF';
-            ctx.font = '48px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 50);
-            ctx.font = '24px Arial';
-            ctx.fillText(reason, canvas.width/2, canvas.height/2);
-            ctx.fillText(`Score: ${score}  Level: ${level}`, canvas.width/2, canvas.height/2 + 50);
-            ctx.fillText('Press SPACE to restart', canvas.width/2, canvas.height/2 + 100);
-            
-            ctx.textAlign = 'left';
-        }
-
-        function resetGame() {
-            score = 0;
-            level = 1;
-            gameSpeed = 5;
-            timeRemaining = CHECKPOINT_TIME;
-            carsPassed = 0;
-            carsToPass = 30;
-            opponents.length = 0;
-            currentTime = 'DAWN';
-            timeChangeCounter = 0;
-            player.x = canvas.width / 2;
-            gameState = GAME_STATE.PLAYING;
-            SOUNDS.engine.play();
-        }
-
-        function drawMenu() {
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Title with shadow
-            ctx.fillStyle = '#FF0000';
-            ctx.font = 'bold 72px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('ENDURO', canvas.width/2 + 4, canvas.height/2 - 46);
-            ctx.fillStyle = '#FFF';
-            ctx.fillText('ENDURO', canvas.width/2, canvas.height/2 - 50);
-            
-            // Animated "Press SPACE to start"
-            const pulse = Math.sin(Date.now() * 0.005) * 0.5 + 0.5;
-            ctx.font = '24px Arial';
-            ctx.fillStyle = `rgba(255, 255, 255, ${pulse})`;
-            ctx.fillText('Press SPACE to start', canvas.width/2, canvas.height/2 + 50);
-            
-            // Controls
-            ctx.font = '18px Arial';
-            ctx.fillStyle = '#888';
-            ctx.fillText('Use ← → arrows to control your car', canvas.width/2, canvas.height/2 + 100);
-            ctx.fillText('Avoid other cars and reach the checkpoint before time runs out!', canvas.width/2, canvas.height/2 + 130);
-            
-            ctx.textAlign = 'left';
-        }
-
-        function gameLoop() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            switch(gameState) {
-                case GAME_STATE.MENU:
-                    drawMenu();
-                    break;
-                    
-                case GAME_STATE.PLAYING:
-                    drawMountains();
-                    drawRoad();
-                    drawPlayer();
-                    drawOpponents();
-                    drawHUD();
-                    
-                    updateGameState();
-                    createOpponent();
-                    break;
-                    
-                case GAME_STATE.GAME_OVER:
-                    // Game over screen is drawn in gameOver function
-                    break;
+                        // pick a lane that doesn't already have a bottom-zone opponent
+                        const availableLanes = [];
+                        const ETA_THRESHOLD = 1.2; // seconds until occupant leaves to allow spawn
+                        for (let i = 0; i < GAME.LANE_COUNT; i++) {
+                            const occupant = opponents.find(o => o.lane === i && o.y > bottomZoneY);
+                            if (!occupant) {
+                                availableLanes.push(i);
+                                continue;
+                            }
+                            // estimate time (seconds) for occupant to exit screen bottom
+                            const estimatedTime = (canvas.height - occupant.y) / (occupant.speed * 80 * state.speed);
+                            if (estimatedTime < ETA_THRESHOLD) availableLanes.push(i);
+                        }
+                        if (availableLanes.length === 0) return;
+                        const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+                    const colors = ['blue', 'green', 'yellow', 'purple', 'orange'];
+                    const color = colors[Math.floor(Math.random() * colors.length)];
+                    const speed = 0.8 + Math.random() * (1.2 + state.level * 0.2);
+                    opponents.push({
+                        lane,
+                        x: road.lanes[lane],
+                        y: -80 - Math.random() * 260,
+                        speed,
+                        sprite: createCarSprite(color),
+                        spriteBright: createCarSpriteBright(color),
+                        width: player.width,
+                        height: player.height,
+                        braking: 0 // 0..1 visual brake intensity for opponents
+                    });
+                }
             }
 
-            requestAnimationFrame(gameLoop);
-        }
-
-        // Controls
-        document.addEventListener('keydown', e => {
-            switch(e.code) {
-                case 'ArrowLeft':
-                    player.dx = -player.speed;
-                    break;
-                case 'ArrowRight':
-                    player.dx = player.speed;
-                    break;
-                case 'Space':
-                    if (gameState === GAME_STATE.MENU || gameState === GAME_STATE.GAME_OVER) {
-                        resetGame();
+            function update(dt) {
+                if (state.mode !== GAME.STATE.PLAYING) return;
+                // time limit removed: gameplay is driven by cars passed only
+                // segment system: alternate straights and curves
+                road.segmentTimer += dt;
+                if (road.segmentTimer >= road.segmentDuration) {
+                    road.segmentTimer = 0;
+                    // toggle segment type; make curves less frequent
+                    if (road.segmentType === 'straight') {
+                        road.segmentType = 'curve';
+                        road.segmentDuration = 2 + Math.random() * 3; // curve length
+                        // set a mild curve direction (-0.6 .. 0.6)
+                        road.targetCurve = (Math.random() * 2 - 1) * 0.6;
+                    } else {
+                        road.segmentType = 'straight';
+                        road.segmentDuration = 3 + Math.random() * 4; // straight length
+                        road.targetCurve = 0;
                     }
-                    break;
+                }
+
+                // adjust road curve toward target for smooth transitions
+                const curveDelta = road.targetCurve - road.curve;
+                road.curve += curveDelta * Math.min(1, road.curveSpeed * dt);
+
+                // advance road visual offset to animate alternating bands (movement illusion)
+                road.offset += state.speed * 200 * dt;
+                if (road.offset > ROAD_BAND_HEIGHT * 2) road.offset -= ROAD_BAND_HEIGHT * 2;
+
+                // update parallax mountains offsets
+                for (const m of MOUNTAINS) {
+                    m.offset += state.speed * 40 * m.speed * dt;
+                    if (m.offset > canvas.width) m.offset -= canvas.width;
+                }
+
+                // throttle smoothing: ramp throttle toward inputTarget for progressive feel
+                state.inputThrottle = state.inputThrottle || 0;
+                // move state.throttle toward inputThrottle smoothly using global THROTTLE_RAMP
+                state.throttle += (state.inputThrottle - state.throttle) * Math.min(1, THROTTLE_RAMP * dt);
+                // detect hard-brake: big negative change in inputThrottle
+                const hardBrakeDelta = prevInputThrottle - state.inputThrottle;
+                if (hardBrakeDelta > 0.8 && state.inputThrottle < 0) {
+                    // flash for ~0.25s
+                    brakeFlashTimer = 0.25;
+                }
+                prevInputThrottle = state.inputThrottle;
+                // decrement flash timer
+                if (brakeFlashTimer > 0) brakeFlashTimer = Math.max(0, brakeFlashTimer - dt);
+                // compute deterministic world speed for this frame so level speed stays constant
+                // worldSpeed = baseSpeed * (1 + throttle * THROTTLE_EFFECT)
+                state.speed = state.baseSpeed * (1 + state.throttle * THROTTLE_EFFECT);
+                // enforce braking limit: when throttle is negative, do not allow speed below half the base speed
+                if (state.throttle < 0) {
+                    const minSpeed = state.baseSpeed * BRAKE_MIN_FACTOR;
+                    if (state.speed < minSpeed) state.speed = minSpeed;
+                }
+                // update engine sound pitch/volume smoothly to reflect speed and throttle
+                try {
+                    if (SOUNDS.engine && !SOUNDS.engine.paused) {
+                        const rate = ENGINE_BASE_RATE + (state.speed - GAME.INITIAL_SPEED) * ENGINE_RATE_SCALE + state.throttle * 0.12;
+                        SOUNDS.engine.playbackRate = Math.max(0.2, rate);
+                        SOUNDS.engine.volume = Math.max(0, Math.min(1, ENGINE_VOLUME_BASE + (state.speed - GAME.INITIAL_SPEED) * 0.05 + Math.abs(state.throttle) * 0.06));
+                    }
+                } catch (e) {}
+                spawnOpponent();
+                for (let i = opponents.length - 1; i >= 0; i--) {
+                    const o = opponents[i];
+                    // opponents move faster with global speed; include dt scaling
+                    // simulate opponents sometimes slowing/braking randomly
+                    if (Math.random() < 0.002) {
+                        // small random brake event
+                        o.braking = Math.min(1, o.braking + 0.6);
+                    }
+                    // easing braking back to 0
+                    o.braking = Math.max(0, o.braking - dt * 0.6);
+                    // reduce effective speed when braking
+                    const effectiveSpeedFactor = 1 - 0.45 * o.braking;
+                    o.y += o.speed * effectiveSpeedFactor * (80 * state.speed) * dt;
+                    const laneBase = road.lanes[o.lane] + (o.lane - (GAME.LANE_COUNT - 1) / 2) * road.curve * 40;
+                    const playerX = player.visualX || road.lanes[player.lane];
+                    // simple AABB collision using x ranges and y overlap
+                    const collided = Math.abs(laneBase - playerX) < (o.width * 0.6) && o.y + o.height > player.posY && o.y < player.posY + player.height - 10;
+                    if (collided) {
+                        SOUNDS.crash.play();
+                        gameOver('Crashed!');
+                        return;
+                    }
+                    if (o.y > canvas.height) {
+                        opponents.splice(i, 1);
+                        state.carsPassed++;
+                        state.score += 10;
+                        if (state.carsPassed >= state.carsToPass) levelComplete();
+                    }
+                }
+                // removed score-based speed bumps to keep per-level speed constant
             }
-        });
 
-        document.addEventListener('keyup', e => {
-            switch(e.code) {
-                case 'ArrowLeft':
-                    if (player.dx < 0) player.dx = 0;
-                    break;
-                case 'ArrowRight':
-                    if (player.dx > 0) player.dx = 0;
-                    break;
+            function levelComplete() {
+                SOUNDS.checkpoint.play();
+                state.level++;
+                state.carsPassed = 0;
+                // require 100 cars to reach next level
+                state.carsToPass = 100;
+                // increase base speed for next level slightly
+                state.baseSpeed += 0.06;
             }
-        });
 
-        // Initialize and start game
-        initRoad();
-        gameLoop();
+            function gameOver(msg) {
+                state.mode = GAME.STATE.GAME_OVER;
+                try { if (SOUNDS.engine) { SOUNDS.engine.pause(); } } catch (e) {}
+            }
 
-        // Start engine sound on first interaction
-        document.addEventListener('click', () => {
-            if (gameState === GAME_STATE.MENU) {
+            function moveLeft() { player.lane = Math.max(0, player.lane - 1); }
+            function moveRight() { player.lane = Math.min(GAME.LANE_COUNT - 1, player.lane + 1); }
+
+            function render(dt) {
+                ctx.fillStyle = TIME_STATES[state.timeOfDay].sky;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // draw parallax mountain layers
+                for (let i = 0; i < MOUNTAINS.length; i++) {
+                    const m = MOUNTAINS[i];
+                    const h = canvas.height * m.height;
+                    ctx.fillStyle = m.color;
+                    // draw several repeated mountain shapes for looping
+                    for (let x = -m.offset; x < canvas.width + 200; x += 220) {
+                        ctx.beginPath();
+                        ctx.moveTo(x - 60, canvas.height - h);
+                        ctx.lineTo(x + 110, canvas.height - h - 120);
+                        ctx.lineTo(x + 280, canvas.height - h);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                }
+                ctx.fillStyle = '#444';
+                // make road span almost the full canvas vertically
+                const roadTop = 40;
+                const roadBottom = canvas.height - 40;
+                ctx.fillRect(road.x, roadTop, road.width, roadBottom - roadTop);
+                ctx.fillStyle = '#FFF';
+                // draw alternating bands on the road to convey motion
+                const bandTop = roadTop;
+                const bandBottom = roadBottom;
+                // softer bands with alternating colors driven by offset parity to enhance movement illusion
+                const bandCount = Math.ceil((bandBottom - bandTop) / (ROAD_BAND_HEIGHT * 1.5)) + 3;
+                const bandGap = Math.floor(ROAD_BAND_HEIGHT * 1.2); // vertical gap between starting points
+                for (let b = -2; b < bandCount; b++) {
+                    const y = bandTop + b * bandGap + (road.offset % (ROAD_BAND_HEIGHT * 2));
+                    // alternate color depending on b and the visual offset to create a 'moving' alternation
+                    const parity = ((b + Math.floor(road.offset / ROAD_BAND_HEIGHT)) % 2) === 0;
+                    ctx.fillStyle = parity ? 'rgba(210,210,210,0.045)' : 'rgba(80,80,80,0.06)';
+                    ctx.fillRect(road.x, y, road.width, ROAD_BAND_HEIGHT);
+                }
+                // lane markers (dashed) drawn over bands - brighter for clarity
+                const laneW = road.width / GAME.LANE_COUNT;
+                ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                const markerW = 6;
+                const markerH = Math.max(14, ROAD_BAND_HEIGHT - 10); // adapt marker height to band height
+                const markerSpacing = ROAD_BAND_HEIGHT + 12; // more spaced to match taller bands
+                for (let i = 1; i < GAME.LANE_COUNT; i++) {
+                    const lx = road.x + i * laneW;
+                    for (let y = bandTop + 8; y < bandBottom; y += markerSpacing) ctx.fillRect(lx - markerW/2, y, markerW, markerH);
+                }
+                // draw opponents with lane offset based on current road curve
+                for (const o of opponents) {
+                    const laneBase = road.lanes[o.lane];
+                    const curveOffset = (o.lane - (GAME.LANE_COUNT - 1) / 2) * road.curve * 40;
+                    const ox = laneBase + curveOffset;
+                    // choose bright sprite when braking
+                    const useBright = o.braking > 0.35;
+                    const sprite = useBright ? (o.spriteBright || o.sprite) : o.sprite;
+                    ctx.drawImage(sprite, ox, o.y, o.width, o.height);
+                    // opponent brake glow overlay
+                    const opponentBrakeIntensity = Math.min(1, o.braking);
+                    const timeScaleOpp = (state.timeOfDay === 'NIGHT' || state.timeOfDay === 'DUSK') ? 1.4 : 1.0;
+                    const bInt = Math.min(1, opponentBrakeIntensity * timeScaleOpp);
+                    if (bInt > 0.01) {
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        const leftX = ox + 4;
+                        const rightX = ox + o.width - 10;
+                        const lightY = o.y + o.height - 12;
+                        const lightW = 6;
+                        const lightH = 4;
+                        ctx.fillStyle = `rgba(255,80,80,${0.12 * bInt})`;
+                        ctx.fillRect(leftX - 2, lightY - 2, lightW + 4, lightH + 4);
+                        ctx.fillRect(rightX - 2, lightY - 2, lightW + 4, lightH + 4);
+                        ctx.fillStyle = `rgba(255,40,40,${0.5 * bInt + 0.15})`;
+                        ctx.fillRect(leftX, lightY, lightW, lightH);
+                        ctx.fillRect(rightX, lightY, lightW, lightH);
+                        ctx.restore();
+                    }
+                }
+
+                // smooth player lateral movement toward lane position influenced by curve
+                const targetLaneX = road.lanes[player.lane] + (player.lane - (GAME.LANE_COUNT - 1) / 2) * road.curve * 40;
+                // lerp player visual x using a simple smoothing factor
+                player.visualX = player.visualX || targetLaneX;
+                player.visualX += (targetLaneX - player.visualX) * Math.min(1, 10 * dt);
+                // choose which sprite to draw: bright variant when actively braking or during a flash
+                const usingBright = (state.throttle < 0.01 && state.throttle < 0) || brakeFlashTimer > 0;
+                const spriteToDraw = usingBright ? (player.spriteBright || player.sprite) : player.sprite;
+                ctx.drawImage(spriteToDraw, player.visualX, player.posY, player.width, player.height);
+                // brake lights overlay: brighten when player is braking (throttle < 0)
+                let brakeIntensity = state.throttle < 0 ? Math.min(1, Math.abs(state.throttle)) : 0;
+                // if flash active, amplify briefly
+                if (brakeFlashTimer > 0) brakeIntensity = Math.max(brakeIntensity, 0.9);
+                // scale intensity by time of day (darker -> stronger visibility)
+                const timeScale = (state.timeOfDay === 'NIGHT' || state.timeOfDay === 'DUSK') ? 1.6 : 1.0;
+                brakeIntensity = Math.min(1, brakeIntensity * timeScale);
+                if (brakeIntensity > 0.001) {
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
+                    const leftX = player.visualX + 4;
+                    const rightX = player.visualX + player.width - 10;
+                    const lightY = player.posY + player.height - 12;
+                    const lightW = 6;
+                    const lightH = 4;
+                    ctx.fillStyle = `rgba(255,80,80,${0.15 * brakeIntensity})`;
+                    ctx.fillRect(leftX - 2, lightY - 2, lightW + 4, lightH + 4);
+                    ctx.fillRect(rightX - 2, lightY - 2, lightW + 4, lightH + 4);
+                    ctx.fillStyle = `rgba(255,40,40,${0.6 * brakeIntensity + 0.2})`;
+                    ctx.fillRect(leftX, lightY, lightW, lightH);
+                    ctx.fillRect(rightX, lightY, lightW, lightH);
+                    ctx.restore();
+                }
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(10, 10, 220, 70);
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px monospace';
+                ctx.fillText(`Score: ${state.score}`, 20, 34);
+                ctx.fillText(`Level: ${state.level}`, 20, 56);
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(canvas.width - 170, 10, 160, 70);
+                ctx.fillStyle = '#fff';
+                // time display removed (progress by cars only)
+                ctx.fillText(`Cars left: ${Math.max(0, state.carsToPass - state.carsPassed)}`, canvas.width - 160, 56);
+                // numeric speed display (approximate km/h mapping)
+                const displayKmh = Math.round((state.speed / GAME.INITIAL_SPEED) * BASE_KMH);
+                ctx.fillText(`Speed: ${displayKmh} km/h`, canvas.width - 160, 34);
+                // throttle HUD (small vertical bar) to indicate acceleration/brake
+                const hudX = canvas.width - 40;
+                const hudY = 20;
+                const hudW = 12;
+                const hudH = 56;
+                // background
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(hudX - 2, hudY - 2, hudW + 4, hudH + 4);
+                // rail
+                ctx.fillStyle = 'rgba(255,255,255,0.12)';
+                ctx.fillRect(hudX, hudY, hudW, hudH);
+                // fill according to throttle: center is neutral; upper half = accelerate, lower half = brake
+                const mid = hudY + hudH / 2;
+                const fillAmt = state.throttle; // -1..1
+                if (fillAmt > 0) {
+                    // accelerate: fill from middle up
+                    const h = (hudH / 2) * fillAmt;
+                    ctx.fillStyle = '#6aff6a';
+                    ctx.fillRect(hudX + 1, mid - h, hudW - 2, h);
+                } else if (fillAmt < 0) {
+                    // brake: fill from middle down
+                    const h = (hudH / 2) * Math.abs(fillAmt);
+                    ctx.fillStyle = '#ff6b6b';
+                    ctx.fillRect(hudX + 1, mid + 1, hudW - 2, h);
+                }
+                if (state.mode === GAME.STATE.MENU) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(canvas.width/2 - 200, canvas.height/2 - 80, 400, 160);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '36px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('ENDURO JS', canvas.width/2, canvas.height/2 - 20);
+                    ctx.font = '18px monospace';
+                    ctx.fillText('Press SPACE to start — ← → to move', canvas.width/2, canvas.height/2 + 8);
+                    ctx.font = '14px monospace';
+                    ctx.fillText('Hold ↑ to accelerate — Hold ↓ to brake', canvas.width/2, canvas.height/2 + 36);
+                    ctx.font = '18px monospace';
+                    ctx.textAlign = 'left';
+                }
+                if (state.mode === GAME.STATE.GAME_OVER) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '40px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 10);
+                    ctx.font = '18px monospace';
+                    ctx.fillText(`Score: ${state.score} — Press SPACE to restart`, canvas.width/2, canvas.height/2 + 30);
+                    ctx.textAlign = 'left';
+                }
+                // on-screen controls: brake (left) and accel (right) at bottom
+                const btnW = 140;
+                const btnH = 80;
+                const pad = 12;
+                const leftX = pad;
+                const rightX = canvas.width - btnW - pad;
+                const bottomY = canvas.height - btnH - pad;
+                // brake button (left) - translucent pedal background with 6 holes (3 rows x 2 cols)
+                ctx.fillStyle = `rgba(0,0,0,0.35)`;
+                roundRect(ctx, leftX, bottomY, btnW, btnH, 12, true, false);
+                const brakePressed = pointerActiveThrottle === -1;
+                // inner plate
+                const plateX = leftX + 8;
+                const plateY = bottomY + 8;
+                const plateW = btnW - 16;
+                const plateH = btnH - 16;
+                ctx.fillStyle = `rgba(200,30,30,${brakePressed ? 0.95 : 0.6})`;
+                roundRect(ctx, plateX, plateY + (brakePressed ? 4 : 0), plateW, plateH, 8, true, false);
+                // draw 6 'holes' (3 rows x 2 cols)
+                const rows = 3, cols = 2;
+                const holeRadius = Math.min(10, plateW / 14);
+                const gapX = (plateW - cols * holeRadius * 2) / (cols + 1);
+                const gapY = (plateH - rows * holeRadius * 2) / (rows + 1);
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const cx = plateX + gapX * (c + 1) + holeRadius * (2 * c + 1);
+                        const cy = plateY + gapY * (r + 1) + holeRadius * (2 * r + 1) + (brakePressed ? 4 : 0);
+                        ctx.beginPath();
+                        ctx.fillStyle = brakePressed ? 'rgba(30,10,10,0.95)' : 'rgba(0,0,0,0.35)';
+                        ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                // accel button (right) - translucent pedal background with 6 holes
+                ctx.fillStyle = `rgba(0,0,0,0.35)`;
+                roundRect(ctx, rightX, bottomY, btnW, btnH, 12, true, false);
+                const accelPressed = pointerActiveThrottle === 1;
+                const aPlateX = rightX + 8;
+                const aPlateY = bottomY + 8;
+                const aPlateW = btnW - 16;
+                const aPlateH = btnH - 16;
+                ctx.fillStyle = `rgba(60,150,60,${accelPressed ? 0.95 : 0.55})`;
+                roundRect(ctx, aPlateX, aPlateY + (accelPressed ? 4 : 0), aPlateW, aPlateH, 8, true, false);
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const cx = aPlateX + gapX * (c + 1) + holeRadius * (2 * c + 1);
+                        const cy = aPlateY + gapY * (r + 1) + holeRadius * (2 * r + 1) + (accelPressed ? 4 : 0);
+                        ctx.beginPath();
+                        ctx.fillStyle = accelPressed ? 'rgba(20,30,10,0.95)' : 'rgba(0,0,0,0.35)';
+                        ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            let last = performance.now();
+            // for detecting hard-brake flashes
+            let prevInputThrottle = 0;
+            let brakeFlashTimer = 0; // seconds remaining for flash
+            // pointer/touch input tracking (0 = none, -1 = brake, 1 = accel)
+            let pointerActiveThrottle = 0;
+            // keyboard visual state (so arrow keys light the on-screen buttons)
+            let keyboardActiveThrottle = 0;
+            function loop(now) {
+                const dt = (now - last) / 1000;
+                last = now;
+                update(dt);
+                render(dt);
+                requestAnimationFrame(loop);
+            }
+
+            window.addEventListener('keydown', (e) => {
+                if (e.code === 'ArrowLeft') moveLeft();
+                if (e.code === 'ArrowRight') moveRight();
+                if (e.code === 'Space' || e.code === 'Spacebar') {
+                    if (state.mode === GAME.STATE.MENU) startGame();
+                    else if (state.mode === GAME.STATE.GAME_OVER) restartGame();
+                }
+                // throttle controls: update keyboardActiveThrottle and recompute combined throttle
+                if (e.code === 'ArrowUp') {
+                    keyboardActiveThrottle = 1;
+                    updatePointerThrottle();
+                }
+                if (e.code === 'ArrowDown') {
+                    keyboardActiveThrottle = -1;
+                    updatePointerThrottle();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                if (e.code === 'ArrowUp' && keyboardActiveThrottle === 1) {
+                    keyboardActiveThrottle = 0;
+                    updatePointerThrottle();
+                }
+                if (e.code === 'ArrowDown' && keyboardActiveThrottle === -1) {
+                    keyboardActiveThrottle = 0;
+                    updatePointerThrottle();
+                }
+            });
+
+            // pointer/touch handling for on-screen controls
+            const activePointers = new Map(); // pointerId -> {x,y,throttle}
+            canvas.addEventListener('pointerdown', (ev) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                const btnW = 140;
+                const btnH = 80;
+                const pad = 12;
+                const leftX = pad;
+                const rightX = canvas.width - btnW - pad;
+                const bottomY = canvas.height - btnH - pad;
+                let throttle = 0;
+                if (x >= leftX && x <= leftX + btnW && y >= bottomY && y <= bottomY + btnH) throttle = -1; // brake
+                else if (x >= rightX && x <= rightX + btnW && y >= bottomY && y <= bottomY + btnH) throttle = 1; // accel
+                activePointers.set(ev.pointerId, { x, y, throttle });
+                updatePointerThrottle();
+                canvas.setPointerCapture(ev.pointerId);
+            });
+            canvas.addEventListener('pointermove', (ev) => {
+                if (!activePointers.has(ev.pointerId)) return;
+                const rect = canvas.getBoundingClientRect();
+                const x = ev.clientX - rect.left;
+                const y = ev.clientY - rect.top;
+                const info = activePointers.get(ev.pointerId);
+                info.x = x; info.y = y;
+                activePointers.set(ev.pointerId, info);
+                updatePointerThrottle();
+            });
+            function updatePointerThrottle() {
+                // if any active pointer presses accel, accel wins; else if any brake, brake; else none
+                let anyAccel = false, anyBrake = false;
+                for (const p of activePointers.values()) {
+                    if (p.throttle === 1) anyAccel = true;
+                    if (p.throttle === -1) anyBrake = true;
+                }
+                if (anyAccel) pointerActiveThrottle = 1;
+                else if (anyBrake) pointerActiveThrottle = -1;
+                else pointerActiveThrottle = 0;
+                // if pointer active, it takes precedence; otherwise fall back to keyboard visual state
+                const effectiveVisual = pointerActiveThrottle !== 0 ? pointerActiveThrottle : keyboardActiveThrottle;
+                pointerActiveThrottle = effectiveVisual;
+                // reflect effective input to state.inputThrottle for ramping
+                if (effectiveVisual !== 0) state.inputThrottle = effectiveVisual;
+                else if (state.inputThrottle === 1 || state.inputThrottle === -1) state.inputThrottle = 0;
+            }
+            canvas.addEventListener('pointerup', (ev) => {
+                activePointers.delete(ev.pointerId);
+                updatePointerThrottle();
+                try { canvas.releasePointerCapture(ev.pointerId); } catch (e) {}
+            });
+            canvas.addEventListener('pointercancel', (ev) => {
+                activePointers.delete(ev.pointerId);
+                updatePointerThrottle();
+            });
+
+            function startGame() {
+                state.mode = GAME.STATE.PLAYING;
+                // progression by cars only: require 30 cars for first level
+                state.carsPassed = 0;
+                state.carsToPass = 30;
+                state.score = 0;
+                state.speed = GAME.INITIAL_SPEED;
+                state.speedTarget = GAME.INITIAL_SPEED;
+                state.baseSpeed = GAME.INITIAL_SPEED;
+                state.throttle = 0;
+                opponents.length = 0;
                 SOUNDS.engine.loop = true;
-                SOUNDS.engine.play();
+                try { SOUNDS.engine.play(); } catch (e) {}
             }
-        }, { once: true });
-    </script>
-</body>
+
+            function restartGame() { state.mode = GAME.STATE.MENU; }
+
+            function init() {
+                initLanes();
+                player.sprite = createCarSprite('blue');
+                // pre-render bright-tail variant for efficient drawing when braking
+                player.spriteBright = createCarSpriteBright('blue');
+                last = performance.now();
+                requestAnimationFrame(loop);
+            }
+
+            init();
+        </script>
+    </body>
 </html>
